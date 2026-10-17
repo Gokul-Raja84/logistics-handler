@@ -8,6 +8,7 @@ import os
 import json
 import asyncio
 import logging
+import argparse
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
@@ -28,6 +29,9 @@ try:
 except ImportError:
     GENAI_AVAILABLE = False
     print("Warning: google-genai not available. Healing will use rule-based fallback.")
+
+# Offline healer
+from offline_healer import OfflineHealer
 
 # Configure logging
 logging.basicConfig(
@@ -68,12 +72,13 @@ class ValidationResult:
     suggested_fix: Optional[str] = None
 
 class LogisticsAgent:
-    def __init__(self):
+    def __init__(self, healer_mode: str = "auto"):
         self.mcp_session: Optional[ClientSession] = None
         self.memory_log: List[MemoryEntry] = []
         self.max_retries = 3
         self.current_order_id: Optional[str] = None
         self.state = AgentState.PENDING
+        self.healer_mode = healer_mode  # "llm", "offline", or "auto"
 
         # LLM client for healing
         self.llm_client = None
@@ -103,6 +108,8 @@ class LogisticsAgent:
                     data = json.load(f)
                     self.memory_log = [MemoryEntry(**entry) for entry in data]
                 logger.info(f"Loaded {len(self.memory_log)} memory entries")
+            else:
+                self.memory_log = []
         except Exception as e:
             logger.warning(f"Could not load memory log: {e}")
             self.memory_log = []
@@ -141,6 +148,30 @@ class LogisticsAgent:
                 relevant.append(entry)
         # Return most recent 5 entries
         return relevant[-5:]
+
+    def _get_known_godowns(self) -> List[str]:
+        """Get known godown IDs from memory or seed data"""
+        # Try to get from memory entries
+        godowns = set()
+        for entry in self.memory_log:
+            # Look for godown IDs in action_taken or outcome
+            if hasattr(entry, 'action_taken') and isinstance(entry.action_taken, str):
+                # Extract godown IDs like G001, G002, etc.
+                import re
+                matches = re.findall(r'G\d{3}', entry.action_taken)
+                godowns.update(matches)
+            if hasattr(entry, 'outcome') and isinstance(entry.outcome, str):
+                # Extract godown IDs like G001, G002, etc.
+                import re
+                matches = re.findall(r'G\d{3}', entry.outcome)
+                godowns.update(matches)
+
+        # If we found some, return them sorted
+        if godowns:
+            return sorted(list(godowns))
+
+        # Return empty list - we'll let the caller handle the case where no godowns are known
+        return []
 
     async def connect_to_mcp_server(self):
         """Connect to the MCP server"""
@@ -278,9 +309,9 @@ class LogisticsAgent:
             actual_state="completed"
         )
 
-    def reflect_and_adapt(self, step: str, validation_result: ValidationResult,
-                         memories: List[MemoryEntry], attempt: int) -> dict:
-        """Reflect on failure and adapt approach using LLM reasoning"""
+    async def reflect_and_adapt(self, step: str, validation_result: ValidationResult,
+                               memories: List[MemoryEntry], attempt: int) -> dict:
+        """Reflect on failure and adapt approach using LLM or offline reasoning"""
 
         # Get order context if available
         order_context = {}
@@ -294,7 +325,7 @@ class LogisticsAgent:
                         pass
                     break
 
-        # Prepare context for LLM
+        # Prepare context for healing
         context = {
             "failed_step": step,
             "validation_error": validation_result.error_message or "Unknown error",
@@ -313,19 +344,126 @@ class LogisticsAgent:
             ]
         }
 
-        # Try LLM healing first if available
-        if self.llm_client is not None:
-            try:
-                llm_result = self._call_llm_for_healing(context)
-                if llm_result is not None:
-                    logger.info(f"LLM healing decision: {llm_result}")
-                    return llm_result
-            except Exception as e:
-                logger.warning(f"LLM healing failed, falling back to rule-based: {e}")
+        # Add order context if we have it
+        if self.current_order_id:
+            # We could fetch the order again, but for now we'll leave it empty
+            # The offline healer can make a call to get_order if needed
+            pass
 
-        # Fallback to rule-based healing
-        logger.info("Using rule-based fallback for healing")
-        return self._rule_based_healing(step, validation_result, attempt)
+        # Healer selection based on mode
+        if self.healer_mode == "llm":
+            # LLM only mode
+            if self.llm_client is not None:
+                try:
+                    llm_result = self._call_llm_for_healing(context)
+                    if llm_result is not None:
+                        logger.info(f"[HEALER:llm] LLM healing decision: {llm_result}")
+                        return llm_result
+                    else:
+                        # LLM returned None, fallback to escalation
+                        logger.warning("[HEALER:llm] LLM healing returned None, escalating")
+                        return {
+                            "diagnosis": "LLM healing failed to produce a decision",
+                            "recovery_action": "escalate",
+                            "new_arguments": {},
+                            "tool_name": "",
+                            "confidence": 0.0
+                        }
+                except Exception as e:
+                    logger.warning(f"[HEALER:llm] LLM healing failed, escalating: {e}")
+                    return {
+                        "diagnosis": f"LLM healing error: {str(e)}",
+                        "recovery_action": "escalate",
+                        "new_arguments": {},
+                        "tool_name": "",
+                        "confidence": 0.0
+                    }
+            else:
+                logger.warning("[HEALER:llm] LLM client not available, escalating")
+                return {
+                    "diagnosis": "LLM client not available",
+                    "recovery_action": "escalate",
+                    "new_arguments": {},
+                    "tool_name": "",
+                    "confidence": 0.0
+                }
+
+        elif self.healer_mode == "offline":
+            # Offline only mode
+            try:
+                offline_healer = OfflineHealer(self.mcp_session, self.current_order_id or "")
+                healing_decision = await offline_healer.heal(
+                    failed_step=step,
+                    tool_name=step,  # The tool that failed corresponds to the step name
+                    arguments={},  # We'll get this from the step plan in the calling context
+                    error_message=validation_result.error_message,
+                    order_context=order_context
+                )
+                # Convert HealingDecision to dict
+                result = {
+                    "diagnosis": healing_decision.diagnosis,
+                    "recovery_action": healing_decision.recovery_action,
+                    "new_arguments": healing_decision.new_arguments,
+                    "tool_name": healing_decision.tool_name,
+                    "confidence": healing_decision.confidence
+                }
+                logger.info(f"[HEALER:offline] Offline healing decision: {result}")
+                return result
+            except Exception as e:
+                logger.warning(f"[HEALER:offline] Offline healing failed: {e}")
+                return {
+                    "diagnosis": f"Offline healing error: {str(e)}",
+                    "recovery_action": "escalate",
+                    "new_arguments": {},
+                    "tool_name": "",
+                    "confidence": 0.0
+                }
+        else:  # auto mode
+            # Try LLM first, then fallback to offline
+            if self.llm_client is not None:
+                try:
+                    llm_result = self._call_llm_for_healing(context)
+                    if llm_result is not None:
+                        logger.info(f"[HEARER:llm] LLM healing decision: {llm_result}")
+                        return llm_result
+                    else:
+                        logger.warning("[HEALER:auto] LLM returned None, trying offline healer")
+                        # Fall through to offline
+                except Exception as e:
+                    logger.warning(f"[HEALER:auto] LLM healing failed, trying offline healer: {e}")
+                    # Fall through to offline
+            else:
+                logger.warning("[HEALER:auto] LLM client not available, trying offline healer")
+
+            # Try offline healer
+            try:
+                offline_healer = OfflineHealer(self.mcp_session, self.current_order_id or "")
+                healing_decision = await offline_healer.heal(
+                    failed_step=step,
+                    tool_name=step,  # The tool that failed corresponds to the step name
+                    arguments={},  # We'll get this from the step plan in the calling context
+                    error_message=validation_result.error_message,
+                    order_context=order_context
+                )
+                # Convert HealingDecision to dict
+                result = {
+                    "diagnosis": healing_decision.diagnosis,
+                    "recovery_action": healing_decision.recovery_action,
+                    "new_arguments": healing_decision.new_arguments,
+                    "tool_name": healing_decision.tool_name,
+                    "confidence": healing_decision.confidence
+                }
+                logger.info(f"[HEALER:offline] Offline healing decision (auto mode): {result}")
+                return result
+            except Exception as e:
+                logger.warning(f"[HEALER:auto] Offline healing failed: {e}")
+                return {
+                    "diagnosis": f"Offline healing error: {str(e)}",
+                    "recovery_action": "escalate",
+                    "new_arguments": {},
+                    "tool_name": "",
+                    "confidence": 0.0
+                }
 
     def _call_llm_for_healing(self, context: dict) -> Optional[dict]:
         """Call LLM to get healing decision"""
@@ -515,16 +653,30 @@ Respond ONLY with the JSON object, no additional text."""
 
         if step_name == "reserve_stock" and "Insufficient stock" in validation_result.error_message:
             # Try alternative godowns
-            current_godown = arguments.get("godown_id", "G001")
-            godowns = ["G001", "G002", "G003"]
-            try:
-                current_index = godowns.index(current_godown)
-                # Try next godown in rotation
-                next_index = (current_index + 1) % len(godowns)
-                arguments["godown_id"] = godowns[next_index]
-                logger.info(f"Rule-based healing: Switching from {current_godown} to {arguments['godown_id']} for stock reservation")
-            except ValueError:
-                arguments["godown_id"] = "G002"  # Default fallback
+            # Get known godowns from memory or use a reasonable default
+            known_godowns = self._get_known_godowns()
+            current_godown = arguments.get("godown_id", known_godowns[0] if known_godowns else "")
+
+            # If we don't have a current godown or known godowns, we can't do much
+            if not known_godowns or not current_godown:
+                # Leave arguments as is - the offline healer will handle discovery
+                return arguments
+
+            if current_godown in known_godowns:
+                try:
+                    current_index = known_godowns.index(current_godown)
+                    # Try next godown in rotation
+                    next_index = (current_index + 1) % len(known_godowns)
+                    arguments["godown_id"] = known_godowns[next_index]
+                    logger.info(f"Rule-based healing: Switching from {current_godown} to {arguments['godown_id']} for stock reservation")
+                except ValueError:
+                    # Fallback to first known godown
+                    arguments["godown_id"] = known_godowns[0]
+                    logger.info(f"Rule-based healing: Falling back to {arguments['godown_id']} for stock reservation")
+            else:
+                # Current godown not in known list, use first known godown
+                arguments["godown_id"] = known_godowns[0]
+                logger.info(f"Rule-based healing: Using {arguments['godown_id']} for stock reservation")
 
         elif step_name == "pack_order" and "must be confirmed before packing" in validation_result.error_message:
             # In a real implementation, we might trigger confirmation
@@ -597,7 +749,7 @@ Respond ONLY with the JSON object, no additional text."""
 
                     # Reflect and adapt for next attempt
                     self.state = AgentState.REFLECTING
-                    healing_plan = self.reflect_and_adapt(
+                    healing_plan = await self.reflect_and_adapt(
                         step_name, validation_result, relevant_memories, attempt
                     )
 
@@ -728,7 +880,7 @@ Respond ONLY with the JSON object, no additional text."""
                 "expected_outcome": "stock_reserved_from_godown"
             },
             {
-                "name": "pack_order",
+                "name": "pack_order":
                 "tool": "pack_order",
                 "arguments": {"order_id": order_id},
                 "expected_outcome": "order_packed"
@@ -740,13 +892,13 @@ Respond ONLY with the JSON object, no additional text."""
                 "expected_outcome": "available_carriers_identified"
             },
             {
-                "name": "book_shipment",
+                "name": "book_shipment":
                 "tool": "book_shipment",
                 "arguments": {"order_id": order_id, "carrier_id": ""},  # Will be filled
                 "expected_outcome": "shipment_booked_with_carrier"
             },
             {
-                "name": "track_shipment",
+                "name": "track_shipment":
                 "tool": "track_shipment",
                 "arguments": {"shipment_id": ""},  # Will be filled
                 "expected_outcome": "shipment_tracked"
@@ -770,7 +922,7 @@ Respond ONLY with the JSON object, no additional text."""
                 if order_items:
                     arguments["sku"] = order_items[0]["sku"]
                 else:
-                    arguments["sku"] = "SKU001"  # fallback
+                    arguments["sku"] = "SKU001"  # fallback - this is acceptable as it's just a placeholder
 
             elif step_name == "reserve_stock" and "check_inventory" in step_results:
                 # Select godown with most stock
@@ -778,12 +930,15 @@ Respond ONLY with the JSON object, no additional text."""
                 if inventory_data:
                     # Find godown with maximum stock
                     best_godown = max(inventory_data.items(),
-                                    key=lambda x: x[1]["stock"]) if inventory_data else ("G001", {"stock": 0})
-                    arguments["godown_id"] = best_godown[0]  # This needs mapping from name to ID
-                    # For simplicity, we'll use first godown ID
-                    arguments["godown_id"] = "G001"
+                                    key=lambda x: x[1]["stock"]) if inventory_data else None
+                    if best_godown:
+                        arguments["godown_id"] = best_godown[0]  # This needs mapping from name to ID
+                    else:
+                        # No inventory data, leave empty to trigger healing if needed
+                        arguments["godown_id"] = ""
                 else:
-                    arguments["godown_id"] = "G001"
+                    # No inventory data, leave empty to trigger healing if needed
+                    arguments["godown_id"] = ""
 
             elif step_name == "list_carriers" and "get_order" in step_results:
                 arguments["destination_pin"] = step_results["get_order"].get("customer_pin", "600001")
@@ -794,7 +949,8 @@ Respond ONLY with the JSON object, no additional text."""
                     # Select first available carrier (could be smarter - fastest/cheapest)
                     arguments["carrier_id"] = carriers[0]["id"]
                 else:
-                    arguments["carrier_id"] = "C001"  # fallback
+                    # No carriers available, leave empty to trigger healing if needed
+                    arguments["carrier_id"] = ""
 
             elif step_name == "track_shipment" and "book_shipment" in step_results:
                 arguments["shipment_id"] = step_results["book_shipment"].get("shipment_id", "")
@@ -852,7 +1008,34 @@ Respond ONLY with the JSON object, no additional text."""
 
 async def main():
     """Main entry point for the agent"""
-    agent = LogisticsAgent()
+    parser = argparse.ArgumentParser(description='Logistics Handler Agent')
+    parser.add_argument('--offline', action='store_true', help='Use offline healing mode only')
+    parser.add_argument('--llm', action='store_true', help='Use LLM healing mode only')
+    parser.add_argument('--auto', action='store_true', help='Use auto healing mode (LLM with offline fallback)')
+    args = parser.parse_args()
+
+    # Determine healer mode
+    healer_mode = "auto"  # default
+    if args.offline:
+        healer_mode = "offline"
+    elif args.llm:
+        healer_mode = "llm"
+    elif args.auto:
+        healer_mode = "auto"
+    # Also check environment variable
+    env_mode = os.getenv("HEALER_MODE", "auto").lower()
+    if env_mode in ["llm", "offline", "auto"]:
+        healer_mode = env_mode
+    # Command line argument overrides environment variable
+    if args.offline or args.llm or args.auto:
+        if args.offline:
+            healer_mode = "offline"
+        elif args.llm:
+            healer_mode = "llm"
+        elif args.auto:
+            healer_mode = "auto"
+
+    agent = LogisticsAgent(healer_mode=healer_mode)
 
     # For demo purposes, process a sample order
     # In reality, this would take order_id as a command line argument
