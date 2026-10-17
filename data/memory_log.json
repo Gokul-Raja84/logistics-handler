@@ -1,0 +1,146 @@
+[
+  {
+    "timestamp": "2026-10-17T12:12:07.884451",
+    "order_id": "ORD001",
+    "step": "get_order",
+    "action_taken": "Called get_order with {'order_id': 'ORD001'}",
+    "outcome": "Success: order_retrieved",
+    "lesson_learned": "Successfully executed get_order on attempt 1",
+    "success": true
+  },
+  {
+    "timestamp": "2026-10-17T12:12:07.905989",
+    "order_id": "ORD001",
+    "step": "check_inventory",
+    "action_taken": "Called check_inventory with {'sku': 'SKU005'}",
+    "outcome": "Success: inventory_checked",
+    "lesson_learned": "Successfully executed check_inventory on attempt 1",
+    "success": true
+  },
+  {
+    "timestamp": "2026-10-17T12:12:07.923863",
+    "order_id": "ORD001",
+    "step": "reserve_stock",
+    "action_taken": "Called reserve_stock with {'order_id': 'ORD001', 'godown_id': 'G001'}",
+    "outcome": "Failed attempt 1: Insufficient stock for SKU001 in godown G001",
+    "lesson_learned": "Will try: Try reserving stock from a different godown with available inventory",
+    "success": false
+  },
+  {
+    "timestamp": "2026-10-17T12:12:08.949577",
+    "order_id": "ORD001",
+    "step": "reserve_stock",
+    "action_taken": "Called reserve_stock with {'order_id': 'ORD001', 'godown_id': 'G001'}",
+    "outcome": "Failed attempt 2: Insufficient stock for SKU001 in godown G001",
+    "lesson_learned": "Will try: Try reserving stock from a different godown with available inventory",
+    "success": false
+  },
+  {
+    "timestamp": "2026-10-17T12:12:10.976534",
+    "order_id": "ORD001",
+    "step": "reserve_stock",
+    "action_taken": "Called reserve_stock with {'order_id': 'ORD001', 'godown_id': 'G001'}",
+    "outcome": "Failed attempt 3: Insufficient stock for SKU001 in godown G001",
+    "lesson_learned": "Will try: Try reserving stock from a different godown with available inventory",
+    "success": false
+  },
+  {
+    "timestamp": "2026-10-17T12:12:13.999060",
+    "order_id": "ORD001",
+    "step": "reserve_stock",
+    "action_taken": "Called reserve_stock with {'order_id': 'ORD001', 'godown_id': 'G001'}",
+    "outcome": "Failed after 4 attempts: Insufficient stock for SKU001 in godown G001",
+    "lesson_learned": "Max retries exceeded, considering alternative approaches",
+    "success": false
+  },
+  {
+    "timestamp": "2026-10-17T12:12:14.011446",
+    "order_id": "ORD001",
+    "step": "complete_order_process",
+    "action_taken": "Processed order through 3 steps",
+    "outcome": "Final status: failed",
+    "lesson_learned": "Order processing failed",
+    "success": false
+  },
+  {
+    "timestamp": "2026-10-17T12:14:00.324097",
+    "order_id": "ORD001",
+    "step": "get_order",
+    "action_taken": "Called get_order with {'order_id': 'ORD001'}",
+    "outcome": "Success: order_retrieved",
+    "lesson_learned": "Successfully executed get_order on attempt 1",
+    "success": true
+  },
+  {
+    "timestamp": "2026-10-17T12:14:00.337570",
+    "order_id": "ORD001",
+    "step": "check_inventory",
+    "action_taken": "Called check_inventory with {'sku': 'SKU005'}",
+    "outcome": "Success: inventory_checked",
+    "lesson_learned": "Successfully executed check_inventory on attempt 1",
+    "success": true
+  },
+  {
+    "timestamp": "2026-10-17T12:14:00.359509",
+    "order_id": "ORD001",
+    "step": "reserve_stock",
+    "action_taken": "Called reserve_stock with {'order_id': 'ORD001', 'godown_id': 'G001'}",
+    "outcome": "Failed attempt 1: Insufficient stock for SKU001 in godown G001",
+    "lesson_learned": "Will try: Try reserving stock from a different godown with available inventory",
+    "success": false
+  },
+  {
+    "timestamp": "2026-10-17T12:14:01.391993",
+    "order_id": "ORD001",
+    "step": "reserve_stock",
+    "action_taken": "Called reserve_stock with {'order_id': 'ORD001', 'godown_id': 'G002'}",
+    "outcome": "Success: stock_reserved",
+    "lesson_learned": "Successfully executed reserve_stock on attempt 2",
+    "success": true
+  },
+  {
+    "timestamp": "2026-10-17T12:14:01.419907",
+    "order_id": "ORD001",
+    "step": "pack_order",
+    "action_taken": "Called pack_order with {'order_id': 'ORD001'}",
+    "outcome": "Success: order_packed",
+    "lesson_learned": "Successfully executed pack_order on attempt 1",
+    "success": true
+  },
+  {
+    "timestamp": "2026-10-17T12:14:01.438440",
+    "order_id": "ORD001",
+    "step": "list_carriers",
+    "action_taken": "Called list_carriers with {'destination_pin': '600001'}",
+    "outcome": "Success: carriers_listed",
+    "lesson_learned": "Successfully executed list_carriers on attempt 1",
+    "success": true
+  },
+  {
+    "timestamp": "2026-10-17T12:14:01.468539",
+    "order_id": "ORD001",
+    "step": "book_shipment",
+    "action_taken": "Called book_shipment with {'order_id': 'ORD001', 'carrier_id': 'C001'}",
+    "outcome": "Success: shipment_booked",
+    "lesson_learned": "Successfully executed book_shipment on attempt 1",
+    "success": true
+  },
+  {
+    "timestamp": "2026-10-17T12:14:01.480145",
+    "order_id": "ORD001",
+    "step": "track_shipment",
+    "action_taken": "Called track_shipment with {'shipment_id': 'SHIP073B5E89'}",
+    "outcome": "Success: shipment_tracked_shipped",
+    "lesson_learned": "Successfully executed track_shipment on attempt 1",
+    "success": true
+  },
+  {
+    "timestamp": "2026-10-17T12:14:01.488410",
+    "order_id": "ORD001",
+    "step": "complete_order_process",
+    "action_taken": "Processed order through 7 steps",
+    "outcome": "Final status: completed",
+    "lesson_learned": "Order processing completed",
+    "success": true
+  }
+]
