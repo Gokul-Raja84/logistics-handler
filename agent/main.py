@@ -880,7 +880,7 @@ Respond ONLY with the JSON object, no additional text."""
                 "expected_outcome": "stock_reserved_from_godown"
             },
             {
-                "name": "pack_order":
+                "name": "pack_order",
                 "tool": "pack_order",
                 "arguments": {"order_id": order_id},
                 "expected_outcome": "order_packed"
@@ -892,13 +892,13 @@ Respond ONLY with the JSON object, no additional text."""
                 "expected_outcome": "available_carriers_identified"
             },
             {
-                "name": "book_shipment":
+                "name": "book_shipment",
                 "tool": "book_shipment",
                 "arguments": {"order_id": order_id, "carrier_id": ""},  # Will be filled
                 "expected_outcome": "shipment_booked_with_carrier"
             },
             {
-                "name": "track_shipment":
+                "name": "track_shipment",
                 "tool": "track_shipment",
                 "arguments": {"shipment_id": ""},  # Will be filled
                 "expected_outcome": "shipment_tracked"
